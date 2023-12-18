@@ -5,6 +5,8 @@ require "net/http"
 require "json"
 require "rubyXL"
 require "rubyXL/convenience_methods/workbook"
+require "open-uri"
+require "nokogiri"
 
 CLIENT_ID = ""
 IDS = [55_644, 54_918, 52_991, 50_664, 54_492, 52_990, 53_040, 51_215, 52_741, 55_742, 51_794, 54_743, 53_879, 50_184,
@@ -19,13 +21,16 @@ def get_response(url)
   JSON.parse(res.body)
 end
 
-def get_data(id)
-  url = "https://api.myanimelist.net/v2/anime/#{id}?fields=title,mean,num_favorites,statistics"
-  get_response(url)
+def scrape_threads(id)
+  url = "https://myanimelist.net/forum/?animeid=#{id}}&topic=episode"
+  uri = URI.parse(url)
+
+  res = Net::HTTP.get_response(uri)
+  Nokogiri::HTML(res.body)
 end
 
-def get_topics(title)
-  url = "https://api.myanimelist.net/v2/forum/topics?q=\"#{title} Episode Discussion\"&subboard_id=1&limit=100"
+def get_data(id)
+  url = "https://api.myanimelist.net/v2/anime/#{id}?fields=title,mean,num_favorites,statistics"
   get_response(url)
 end
 
@@ -48,52 +53,48 @@ def get_unique_users(contents)
   end
 end
 
-def clean_topics(title, topics)
-  topics.filter_map do |topic|
-    topic if topic["title"].include?("#{title} Episode")
-  end
-end
-
-# rubocop:disable Metrics/MethodLength
-# rubocop:disable Metrics/AbcSize
 def get_users(anime)
   Async do
-    topic_contents = anime.map { |topic| Async { get_topic_content(topic["id"]) } }.map(&:wait)
+    topic_contents = anime.map { |topic| Async { get_topic_content(topic[0]) } }.map(&:wait)
 
     user_names = topic_contents.map { |topic| Async { get_unique_users(topic).flatten } }.map(&:wait)
 
-    anime.map.with_index { |topic, idx| Async { user_names[idx] << topic["last_post_created_by"]["name"] } }.map(&:wait)
+    anime.map.with_index { |topic, idx| Async { user_names[idx] << topic[1] } }.map(&:wait)
   end
 end
 
-# rubocop:disable Metrics/PerceivedComplexity
-# rubocop:disable Metrics/CyclomaticComplexity
+def get_ids_and_lp(html)
+  topic_id = []
+  last_poster = []
+
+  (1..).each do |i|
+    break if (topic_row = html.at_css("tr#topicRow#{i}")).nil?
+
+    topic_id << topic_row["data-topic-id"]
+    last_poster << html.css("tr#topicRow#{i} td.forum_boardrow1").text.strip.match(/by\s+(.+)/i).to_s.split[1]
+  end
+  topic_id.zip(last_poster)
+end
+
+# rubocop:disable Metrics/MethodLength
 def anime_data
   anime_data = []
   Async do
     anime_data = IDS.map { |id| Async { get_data(id) } }.map(&:wait)
-    topic_per_anime = anime_data.map { |data| Async { get_topics(data["title"]) } }.map(&:wait)
+    users = IDS.map { |id| Async { get_ids_and_lp(scrape_threads(id)) } }.map(&:wait)
+    users.map! { |id| Async { get_users(id).wait } }.map!(&:wait)
 
-    cleaned_topics = topic_per_anime.map.with_index do |topic, idx|
-      Async { clean_topics(anime_data[idx]["title"], topic["data"]) }
-    end.map(&:wait)
-
-    users = cleaned_topics.map { |id| Async { get_users(id).wait } }.map(&:wait)
-
-    users.map.with_index do |f, idx|
+    users.map.with_index do |arr, idx|
       Async do
-        anime_data[idx]["unique_posters"] = f.map do |q|
-          Async { q.flatten.uniq.length }
+        anime_data[idx]["unique_posters"] = arr.map do |names|
+          Async { names.flatten.uniq.length }
         end.map.sum(&:wait)
       end
     end.map(&:wait)
   end
   anime_data
 end
-# rubocop:enable Metrics/PerceivedComplexity
-# rubocop:enable Metrics/CyclomaticComplexity
 # rubocop:enable Metrics/MethodLength
-# rubocop:enable Metrics/AbcSize
 
 headers = %w[Title Score Watching Dropped Favorites Planning UniqP]
 
@@ -113,6 +114,7 @@ anime_data.each.with_index(1) do |e, idx|
   sheet.add_cell(idx, 5, e["statistics"]["status"]["plan_to_watch"].to_i)
   sheet.add_cell(idx, 6, e["unique_posters"])
 end
+
 timestamp = Time.new
 timestamp.strftime("%Y-%m-%d %H:%M:%S")
 workbook.write("FAL #{timestamp}.xlsx")
