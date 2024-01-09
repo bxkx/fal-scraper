@@ -7,15 +7,30 @@ require "rubyXL"
 require "rubyXL/convenience_methods/workbook"
 require "open-uri"
 require "nokogiri"
-require "date"
+require "active_support/all"
+require "chronic"
 
 CLIENT_ID = ""
+SEASON_START = Time.new(2023, 12, 31, 22, 0, 0, "UTC")
+
+DISC_WEEKS = [SEASON_START, SEASON_START + 2.weeks, SEASON_START + 4.weeks, SEASON_START + 6.weeks, SEASON_START + 8.weeks,
+              SEASON_START + 10.weeks, SEASON_START + 12.weeks, SEASON_START + 13.weeks].freeze
+
 IDS = [50_392, 55_690, 50_803, 52_701, 53_889, 55_866, 53_488, 53_421, 53_730, 52_816, 54_829, 54_265, 51_673, 49_613,
        54_794, 54_869,
        53_223, 54_632, 54_837, 55_129, 53_590, 54_449, 52_359, 54_617, 51_648, 54_722, 56_352, 55_358, 55_774, 55_998,
        56_242, 55_397, 55_973, 52_482].freeze
 
 abort("!!! You need to add your API client ID !!!") if CLIENT_ID.empty?
+
+Time.zone = "Pacific Time (US & Canada)"
+Chronic.time_class = Time.zone
+
+def current_week
+  current_week = []
+  DISC_WEEKS.each_cons(2) { |w| current_week << w if Time.now.utc.between?(w[0], w[1]) }.flatten
+  # current_week.flatten
+end
 
 def get_response(url)
   uri = URI(url)
@@ -53,9 +68,12 @@ def get_unique_users(contents)
   unique_users = []
   contents.map do |content|
     content["data"]["posts"].map do |post|
-      unique_users << post["created_by"]["name"]
+      if Time.parse(post["created_at"]).between?(current_week.first.to_s, current_week.last.to_s)
+        unique_users << post["created_by"]["name"]
+      end
     end
   end
+  unique_users.compact
 end
 
 def get_users(anime)
@@ -71,14 +89,18 @@ end
 def get_ids_and_lp(html)
   topic_id = []
   last_poster = []
+  dates = []
 
   (1..).each do |i|
     break if (topic_row = html.at_css("tr#topicRow#{i}")).nil?
 
     topic_id << topic_row["data-topic-id"]
     last_poster << html.css("tr#topicRow#{i} td.forum_boardrow1").text.strip.match(/by\s+(.+)/i).to_s.split[1]
+    date_element = html.at_xpath("//tr[@id='topicRow#{i}']//td[@class='forum_boardrow1' and @align='right']/br/following-sibling::text()").text.strip
+
+    dates << Time.parse(Chronic.parse(date_element).to_s).utc # .in_time_zone("UTC")
   end
-  topic_id.zip(last_poster)
+  topic_id.zip(last_poster, dates).select { |e| e[2].between?(current_week.first, current_week.last) }
 end
 
 # rubocop:disable Metrics/MethodLength
