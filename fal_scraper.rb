@@ -7,6 +7,7 @@ require "rubyXL"
 require "rubyXL/convenience_methods/workbook"
 require "open-uri"
 require "nokogiri"
+require "date"
 
 CLIENT_ID = ""
 IDS = [50_392, 55_690, 50_803, 52_701, 53_889, 55_866, 53_488, 53_421, 53_730, 52_816, 54_829, 54_265, 51_673, 49_613,
@@ -98,25 +99,26 @@ def anime_data
 end
 # rubocop:enable Metrics/MethodLength
 
-headers = %w[Title Score Watching Dropped Favorites Planning UniqP]
+headers = %w[Date Title Score Watching Dropped Favorites Planning UniqP]
 
 workbook = RubyXL::Workbook.new
 sheet = workbook.first
+
+timestamp = Time.new
 
 headers.each_with_index do |e, idx|
   sheet.add_cell(0, idx, e)
 end
 
 anime_data.each.with_index(1) do |e, idx|
-  sheet.add_cell(idx, 0, e["title"])
-  sheet.add_cell(idx, 1, e["mean"])
-  sheet.add_cell(idx, 2, e["statistics"]["status"]["watching"].to_i)
-  sheet.add_cell(idx, 3, e["statistics"]["status"]["dropped"].to_i)
-  sheet.add_cell(idx, 4, e["num_favorites"])
-  sheet.add_cell(idx, 5, e["statistics"]["status"]["plan_to_watch"].to_i)
-  sheet.add_cell(idx, 6, e["unique_posters"])
+  sheet.add_cell(idx, 0, timestamp.strftime("%Y-%m-%d"))
+  sheet.add_cell(idx, 1, e["title"])
+  sheet.add_cell(idx, 2, e["mean"])
+  sheet.add_cell(idx, 3, e["statistics"]["status"]["watching"].to_i)
+  sheet.add_cell(idx, 4, e["statistics"]["status"]["dropped"].to_i)
+  sheet.add_cell(idx, 5, e["num_favorites"])
+  sheet.add_cell(idx, 6, e["statistics"]["status"]["plan_to_watch"].to_i)
+  sheet.add_cell(idx, 7, e["unique_posters"])
 end
 
-timestamp = Time.new
-timestamp.strftime("%Y-%m-%d %H:%M:%S")
-workbook.write("FAL #{timestamp}.xlsx")
+workbook.write("FAL #{timestamp.strftime("%Y-%m-%d %H:%M:%S")}.xlsx")
