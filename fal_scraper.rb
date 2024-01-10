@@ -5,9 +5,10 @@ require "net/http"
 require "json"
 require "rubyXL"
 require "rubyXL/convenience_methods/workbook"
-require "open-uri"
 require "nokogiri"
-require "active_support/all"
+require "active_support"
+require "active_support/core_ext/time"
+require "active_support/core_ext/numeric"
 require "chronic"
 
 CLIENT_ID = ""
@@ -26,7 +27,7 @@ IDS = [50_392, 55_690, 50_803, 52_701, 53_889, 55_866, 53_488, 53_421, 53_730, 5
 abort("!!! You need to add your API client ID !!!") if CLIENT_ID.empty?
 
 Time.zone = "Pacific Time (US & Canada)"
-Chronic.time_class = Time.zone
+Chronic.time_class = Time
 
 def get_response(url)
   uri = URI(url)
@@ -90,8 +91,7 @@ def get_ids_and_lp(html)
     topic_id << topic_row["data-topic-id"]
     last_poster << html.css("tr#topicRow#{i} td.forum_boardrow1").text.strip.match(/by\s+(.+)/i).to_s.split[1]
     date_element = html.at_xpath("//tr[@id='topicRow#{i}']//td[@class='forum_boardrow1' and @align='right']/br/following-sibling::text()").text.strip
-
-    dates << Time.parse(Chronic.parse(date_element).to_s).utc
+    dates << Chronic.parse(date_element).utc
   end
   topic_id.zip(last_poster, dates).select { |e| e[2].after?(LAST_DISC_WEEK) }
 end
